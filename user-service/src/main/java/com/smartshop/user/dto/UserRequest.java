@@ -1,7 +1,5 @@
 package com.smartshop.user.dto;
 
-import java.time.LocalDateTime;
-
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -11,19 +9,12 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class userResponse {
+public class UserRequest {
 
-    private Long id;
     private String name;
     private String email;
+    private String password;
     private String role;
-    private LocalDateTime createdAt;
-	public Long getId() {
-		return id;
-	}
-	public void setId(Long id) {
-		this.id = id;
-	}
 	public String getName() {
 		return name;
 	}
@@ -36,17 +27,18 @@ public class userResponse {
 	public void setEmail(String email) {
 		this.email = email;
 	}
+	public String getPassword() {
+		return password;
+	}
+	public void setPassword(String password) {
+		this.password = password;
+	}
 	public String getRole() {
 		return role;
 	}
 	public void setRole(String role) {
 		this.role = role;
 	}
-	public LocalDateTime getCreatedAt() {
-		return createdAt;
-	}
-	public void setCreatedAt(LocalDateTime createdAt) {
-		this.createdAt = createdAt;
-	}
+    
     
 }
