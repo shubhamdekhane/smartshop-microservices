@@ -9,7 +9,6 @@ import java.security.Key;
 import java.util.Date;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-
 @Service
 public class JwtService {
 
@@ -26,7 +25,7 @@ public class JwtService {
                 .setIssuedAt(new Date())
                 .setExpiration(new Date(
                     System.currentTimeMillis() + expiration))
-                .signWith(getSigningKey(), 
+                .signWith(getSigningKey(),
                     SignatureAlgorithm.HS256)
                 .compact();
     }
@@ -36,11 +35,13 @@ public class JwtService {
     }
 
     public String extractRole(String token) {
-        return extractClaims(token).get("role", String.class);
+        return extractClaims(token)
+            .get("role", String.class);
     }
 
-    public boolean isTokenValid(String token, String email) {
-        return extractEmail(token).equals(email) 
+    public boolean isTokenValid(
+            String token, String email) {
+        return extractEmail(token).equals(email)
             && !isTokenExpired(token);
     }
 
@@ -59,7 +60,7 @@ public class JwtService {
     }
 
     private Key getSigningKey() {
-        byte[] keyBytes = Decoders.BASE64
+        byte[] keyBytes = Decoders.BASE64URL
             .decode(secretKey);
         return Keys.hmacShaKeyFor(keyBytes);
     }
