@@ -29,16 +29,25 @@ public class KafkaConsumerConfig {
             ConsumerConfig.GROUP_ID_CONFIG,
             "payment-group");
         config.put(
+            ConsumerConfig.AUTO_OFFSET_RESET_CONFIG,
+            "earliest");
+        config.put(
             ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG,
             StringDeserializer.class);
         config.put(
             ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG,
             JsonDeserializer.class);
+
+        // THIS IS THE KEY FIX!
+        // Tell consumer exactly which class to use
         config.put(
             JsonDeserializer.TRUSTED_PACKAGES, "*");
         config.put(
             JsonDeserializer.VALUE_DEFAULT_TYPE,
-            OrderEvent.class);
+            "com.smartshop.payment.kafka.OrderEvent");
+        config.put(
+            JsonDeserializer.USE_TYPE_INFO_HEADERS,
+            false);
         return new DefaultKafkaConsumerFactory<>(config);
     }
 
