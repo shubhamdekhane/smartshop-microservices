@@ -6,10 +6,9 @@ import org.springframework.web.bind.annotation.PathVariable;
 
 import com.smartshop.order.dto.ProductResponse;
 
-@FeignClient(name = "product-service")
+@FeignClient(name = "product-service", fallback = ProductClientFallback.class)  
 public interface ProductClient {
 
     @GetMapping("/api/products/{id}")
-    ProductResponse getProductById(
-        @PathVariable("id") Long id);
+    ProductResponse getProductById(@PathVariable("id") Long id);
 }
