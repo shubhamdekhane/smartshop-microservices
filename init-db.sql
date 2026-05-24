@@ -1,0 +1,4 @@
+CREATE DATABASE IF NOT EXISTS smartshop_user;
+CREATE DATABASE IF NOT EXISTS smartshop_product;
+CREATE DATABASE IF NOT EXISTS smartshop_order;
+CREATE DATABASE IF NOT EXISTS smartshop_payment;
