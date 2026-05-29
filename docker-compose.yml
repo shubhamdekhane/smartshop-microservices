@@ -1,6 +1,8 @@
 services:
 
-  # ── Infrastructure ──────────────────────────────────────
+  # ── Infrastructure ──────────────────────────────────────────────────────
+  # MySQL runs first because user/product/order/payment services need it.
+  # start_period gives MySQL 60 seconds to initialize before health checks begin.
   mysql:
     image: mysql:8.0
     container_name: smartshop-mysql
@@ -16,19 +18,25 @@ services:
     networks:
       - smartshop-net
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
 
+  # Zookeeper is required by Kafka to manage brokers and topics.
   zookeeper:
     image: confluentinc/cp-zookeeper:7.6.0
     container_name: smartshop-zookeeper
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
     networks:
       - smartshop-net
 
+  # Kafka is the message bus. Order service sends messages here.
+  # Payment and Notification services read messages from here.
+  # Container name is 'kafka' - this is the hostname other containers use.
   kafka:
     image: confluentinc/cp-kafka:7.6.0
     container_name: smartshop-kafka
@@ -39,17 +47,20 @@ services:
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://smartshop-kafka:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
     networks:
       - smartshop-net
     healthcheck:
-      test: ["CMD", "kafka-topics.sh", "--bootstrap-server", "localhost:9092", "--list"]
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
       interval: 15s
       timeout: 10s
-      retries: 5
+      retries: 10
+      start_period: 30s
 
+  # Zipkin collects tracing data from all services so you can see
+  # the full journey of a request across multiple services.
   zipkin:
     image: openzipkin/zipkin
     container_name: smartshop-zipkin
@@ -58,24 +69,25 @@ services:
     networks:
       - smartshop-net
 
-  # ── Services ────────────────────────────────────────────
+  # ── Spring Boot Services ────────────────────────────────────────────────
+  # Discovery service (Eureka) must start first.
+  # All other services register themselves here on startup.
   discovery-service:
     build: ./discovery-service
     container_name: smartshop-discovery
     ports:
       - "8761:8761"
-    environment:
-      EUREKA_CLIENT_REGISTER-WITH-EUREKA: "false"
-      EUREKA_CLIENT_FETCH-REGISTRY: "false"
     networks:
       - smartshop-net
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8761/actuator/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
 
+  # API Gateway is the single entry point for all requests.
+  # It routes requests to the correct service using Eureka.
   api-gateway:
     build: ./api-gateway
     container_name: smartshop-gateway
@@ -85,11 +97,14 @@ services:
       discovery-service:
         condition: service_healthy
     environment:
-      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://smartshop-discovery:8761/eureka/
-      EUREKA_INSTANCE_PREFER-IP-ADDRESS: "true"
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://discovery-service:8761/eureka/
     networks:
       - smartshop-net
 
+  # User service handles registration and JWT login.
+  # Needs MySQL for storing users.
+  # FIX: Your properties say smartShop_User (camelCase) but we override
+  # with smartshop_user (lowercase) which matches what init-db.sql creates.
   user-service:
     build: ./user-service
     container_name: smartshop-user
@@ -101,14 +116,15 @@ services:
       discovery-service:
         condition: service_healthy
     environment:
-      SPRING_DATASOURCE_URL: jdbc:mysql://smartshop-mysql:3306/smartshop_user
-      SPRING_DATASOURCE_USERNAME: smartshop
-      SPRING_DATASOURCE_PASSWORD: smartshop123
-      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://smartshop-discovery:8761/eureka/
-      EUREKA_INSTANCE_PREFER-IP-ADDRESS: "true"
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://discovery-service:8761/eureka/
+      - SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/smartshop_user
+      - SPRING_DATASOURCE_USERNAME=smartshop
+      - SPRING_DATASOURCE_PASSWORD=smartshop123
     networks:
       - smartshop-net
 
+  # Product service handles product CRUD operations.
+  # Needs MySQL for storing products.
   product-service:
     build: ./product-service
     container_name: smartshop-product
@@ -120,14 +136,17 @@ services:
       discovery-service:
         condition: service_healthy
     environment:
-      SPRING_DATASOURCE_URL: jdbc:mysql://smartshop-mysql:3306/smartshop_product
-      SPRING_DATASOURCE_USERNAME: smartshop
-      SPRING_DATASOURCE_PASSWORD: smartshop123
-      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://smartshop-discovery:8761/eureka/
-      EUREKA_INSTANCE_PREFER-IP-ADDRESS: "true"
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://discovery-service:8761/eureka/
+      - SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/smartshop_product
+      - SPRING_DATASOURCE_USERNAME=smartshop
+      - SPRING_DATASOURCE_PASSWORD=smartshop123
     networks:
       - smartshop-net
 
+  # Order service creates orders, calls Product service via Feign,
+  # and sends order events to Kafka.
+  # FIX: Your properties say kafka-broker:9092 but container name is kafka.
+  # We override with SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9092
   order-service:
     build: ./order-service
     container_name: smartshop-order
@@ -136,51 +155,58 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
-      kafka:
-        condition: service_healthy
       discovery-service:
         condition: service_healthy
+      kafka:
+        condition: service_healthy
     environment:
-      SPRING_DATASOURCE_URL: jdbc:mysql://smartshop-mysql:3306/smartshop_order
-      SPRING_DATASOURCE_USERNAME: smartshop
-      SPRING_DATASOURCE_PASSWORD: smartshop123
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: smartshop-kafka:9092
-      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://smartshop-discovery:8761/eureka/
-      EUREKA_INSTANCE_PREFER-IP-ADDRESS: "true"
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://discovery-service:8761/eureka/
+      - SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/smartshop_order
+      - SPRING_DATASOURCE_USERNAME=smartshop
+      - SPRING_DATASOURCE_PASSWORD=smartshop123
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9092
     networks:
       - smartshop-net
 
+  # Payment service listens to Kafka for order events and processes payments.
+  # FIX: Was missing MySQL dependency and credentials in docker-compose.
+  # FIX: kafka-broker:9092 overridden with kafka:9092
   payment-service:
     build: ./payment-service
     container_name: smartshop-payment
     ports:
       - "8084:8084"
     depends_on:
-      kafka:
+      mysql:
         condition: service_healthy
       discovery-service:
         condition: service_healthy
+      kafka:
+        condition: service_healthy
     environment:
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: smartshop-kafka:9092
-      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://smartshop-discovery:8761/eureka/
-      EUREKA_INSTANCE_PREFER-IP-ADDRESS: "true"
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://discovery-service:8761/eureka/
+      - SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/smartshop_payment
+      - SPRING_DATASOURCE_USERNAME=smartshop
+      - SPRING_DATASOURCE_PASSWORD=smartshop123
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9092
     networks:
       - smartshop-net
 
+  # Notification service listens to Kafka and sends emails.
+  # FIX: kafka-broker:9092 overridden with kafka:9092
   notification-service:
     build: ./notification-service
     container_name: smartshop-notification
     ports:
       - "8085:8085"
     depends_on:
-      kafka:
-        condition: service_healthy
       discovery-service:
         condition: service_healthy
+      kafka:
+        condition: service_healthy
     environment:
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: smartshop-kafka:9092
-      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://smartshop-discovery:8761/eureka/
-      EUREKA_INSTANCE_PREFER-IP-ADDRESS: "true"
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://discovery-service:8761/eureka/
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9092
     networks:
       - smartshop-net
 
